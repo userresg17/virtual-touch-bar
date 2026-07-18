@@ -1,6 +1,7 @@
 import Cocoa
 import CoreAudio
 import AudioToolbox
+import IOKit.hid
 
 // MARK: - DSP puro (ganho + limiter)
 // Funções puras, testáveis via --selftest, sem tocar em hardware.
@@ -89,6 +90,11 @@ final class InputMonitor {
     private static let keyCodeX: Int64 = 7   // tecla "x"
 
     func start() {
+        // O CGEventTap de teclado exige a permissão de "Monitorização de Entrada"
+        // (Input Monitoring), que é SEPARADA da Acessibilidade. Sem ela o tap é
+        // criado mas nunca recebe eventos. Este pedido dispara o prompt do sistema.
+        IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
+
         let mask = (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue)
         let refcon = Unmanaged.passUnretained(self).toOpaque()
 
