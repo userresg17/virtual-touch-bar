@@ -1,0 +1,6 @@
+# Saída de build
+*.app/
+build/
+
+# macOS
+.DS_Store
