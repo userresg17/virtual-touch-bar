@@ -561,7 +561,7 @@ git commit -m "feat(amp): motor Core Audio (process tap + aggregate + limiter)"
 
 ---
 
-## Task 4: Robustez a mudança de dispositivo + memória por dispositivo
+## Task 4: Robustez a mudança de dispositivo + memória por dispositivo ✅ CONCLUÍDA
 
 **Files:**
 - Modify: `amplifier.swift` (`AudioAmplifier`)

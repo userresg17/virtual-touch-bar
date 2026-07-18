@@ -171,6 +171,58 @@ final class AudioAmplifier {
 
     private let mainElement = AudioObjectPropertyElement(kAudioObjectPropertyElementMain)
 
+    // MARK: Memória por dispositivo (UserDefaults)
+    // Cada dispositivo de saída (identificado pelo UID, estável entre reconexões)
+    // guarda seu próprio ganho preferido — útil pra BT, que costuma precisar de
+    // mais boost que os alto-falantes internos.
+    private let memoryKey = "amplifierGainByDevice"
+
+    private func savePercentForCurrentDevice() {
+        guard let dev = defaultOutputDevice(), let uid = deviceUID(dev) else { return }
+        var map = UserDefaults.standard.dictionary(forKey: memoryKey) as? [String: Int] ?? [:]
+        map[uid] = percent
+        UserDefaults.standard.set(map, forKey: memoryKey)
+    }
+
+    private func savedPercentForCurrentDevice() -> Int? {
+        guard let dev = defaultOutputDevice(), let uid = deviceUID(dev) else { return nil }
+        let map = UserDefaults.standard.dictionary(forKey: memoryKey) as? [String: Int] ?? [:]
+        return map[uid]
+    }
+
+    // MARK: Observação de mudança de dispositivo
+    // Se a saída padrão cai (ex.: soundbar BT desconecta) ou troca enquanto o
+    // boost está ligado, o grafo antigo aponta pro dispositivo errado/morto —
+    // é preciso derrubar e remontar no dispositivo novo, sem travar o áudio.
+    private var listenerBlock: AudioObjectPropertyListenerBlock?
+    private var deviceObserverStarted = false   // evita registrar o listener mais de uma vez
+
+    private func startDeviceObserver() {
+        guard !deviceObserverStarted else { return }
+        deviceObserverStarted = true
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal, mElement: mainElement)
+        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            DispatchQueue.main.async { self?.handleDeviceChange() }
+        }
+        listenerBlock = block
+        AudioObjectAddPropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject), &addr, DispatchQueue.main, block)
+    }
+
+    // A saída mudou (ex.: soundbar BT caiu). Derruba o grafo com segurança e,
+    // se o boost estava ligado, remonta no novo dispositivo aplicando a memória.
+    private func handleDeviceChange() {
+        let wasOn = isOn
+        if wasOn { destroyGraph(); isOn = false }
+        if let saved = savedPercentForCurrentDevice() { percent = saved; targetGain = gainMultiplier(percent: percent) }
+        if wasOn {
+            currentGain = 1.0
+            _ = start()
+        }
+    }
+
     // MARK: Dispositivo de saída atual
 
     private func defaultOutputDevice() -> AudioObjectID? {
@@ -314,6 +366,7 @@ final class AudioAmplifier {
 
     @discardableResult
     func start() -> Bool {
+        startDeviceObserver()   // garante que trocas de saída sejam observadas mesmo no primeiro start
         guard !isOn else { return true }
         guard buildGraph() else { destroyGraph(); return false }
         guard installIOProc() else { destroyGraph(); return false }
@@ -330,6 +383,7 @@ final class AudioAmplifier {
     func setPercent(_ p: Int) {
         percent = max(100, min(400, p))
         targetGain = gainMultiplier(percent: percent)   // lido pela thread de áudio (ramp suaviza)
+        savePercentForCurrentDevice()   // lembra o ganho preferido deste dispositivo pra próxima vez
     }
 
     /// Smoke test para o --selftest: prova que o grafo cria e destrói sem crashar.
