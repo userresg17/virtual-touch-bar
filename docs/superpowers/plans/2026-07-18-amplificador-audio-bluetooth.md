@@ -643,7 +643,7 @@ git commit -m "feat(amp): memória por dispositivo e restauração ao trocar/cai
 
 ---
 
-## Task 5: HUD (`AmplifierPanel`) + integração final
+## Task 5: HUD (`AmplifierPanel`) + integração final ✅ CONCLUÍDA
 
 **Files:**
 - Modify: `amplifier.swift` (adicionar `AmplifierPanel`, enum `AmplifierPreset`)

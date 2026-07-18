@@ -393,3 +393,129 @@ final class AudioAmplifier {
         return ok
     }
 }
+
+// MARK: - HUD do amplificador
+
+enum AmplifierPreset: Int, CaseIterable {
+    case off = 100, boost = 200, max = 400
+    var label: String {
+        switch self {
+        case .off: return "Off"
+        case .boost: return "Boost"
+        case .max: return "Máx"
+        }
+    }
+}
+
+@available(macOS 14.4, *)
+final class AmplifierPanel {
+    static let shared = AmplifierPanel()
+    private var panel: NSPanel?
+    private var slider: NSSlider?
+    private var readout: NSTextField?
+    private var deviceLabel: NSTextField?
+
+    func toggle() {
+        if let p = panel, p.isVisible { p.orderOut(nil); return }
+        if panel == nil { build() }
+        refresh()
+        position()
+        panel?.orderFrontRegardless()
+    }
+
+    private func build() {
+        let p = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 280, height: 132),
+                        styleMask: [.borderless, .nonactivatingPanel],
+                        backing: .buffered, defer: false)
+        p.level = .statusBar
+        p.isFloatingPanel = true
+        p.hidesOnDeactivate = false
+        p.isOpaque = false
+        p.backgroundColor = .clear
+        p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+
+        let container = NSView()
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor(white: 0.06, alpha: 0.85).cgColor
+        container.layer?.cornerRadius = Layout.panelCornerRadius
+        p.contentView = container
+
+        let dev = NSTextField(labelWithString: "—")
+        dev.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        dev.textColor = NSColor(white: 0.8, alpha: 1)
+        deviceLabel = dev
+
+        let read = NSTextField(labelWithString: "100%  ·  0 dB")
+        read.font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
+        read.textColor = .white
+        readout = read
+
+        let s = NSSlider(value: 100, minValue: 100, maxValue: 400,
+                         target: self, action: #selector(sliderMoved(_:)))
+        slider = s
+
+        let presets = NSStackView(views: AmplifierPreset.allCases.map { preset in
+            let b = makeButton(title: preset.label, width: 74,
+                               target: self, action: #selector(presetTapped(_:)), tag: preset.rawValue)
+            return b
+        })
+        presets.spacing = 6
+
+        let v = NSStackView(views: [dev, read, s, presets])
+        v.orientation = .vertical
+        v.alignment = .leading
+        v.spacing = 8
+        v.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(v)
+        NSLayoutConstraint.activate([
+            v.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 14),
+            v.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -14),
+            v.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
+            s.widthAnchor.constraint(equalToConstant: 252),
+        ])
+        panel = p
+    }
+
+    private func refresh() {
+        let amp = AudioAmplifier.shared
+        deviceLabel?.stringValue = "🔊 " + amp.currentOutputName()
+        // Se o boost está desligado, mostrar 100% (Off) em vez do último ganho —
+        // senão o HUD exibiria um percentual "fantasma" ao reabrir após desligar.
+        let displayed = amp.isOn ? amp.percent : 100
+        slider?.doubleValue = Double(displayed)
+        updateReadout(displayed)
+    }
+
+    private func updateReadout(_ percent: Int) {
+        let db = 20.0 * log10(Double(percent) / 100.0)
+        readout?.stringValue = String(format: "%d%%  ·  %+.0f dB", percent, db)
+    }
+
+    @objc private func sliderMoved(_ sender: NSSlider) {
+        let p = Int(sender.doubleValue)
+        applyPercent(p)
+    }
+
+    @objc private func presetTapped(_ sender: NSButton) {
+        applyPercent(sender.tag)
+        slider?.doubleValue = Double(sender.tag)
+    }
+
+    private func applyPercent(_ percent: Int) {
+        let amp = AudioAmplifier.shared
+        updateReadout(percent)
+        if percent <= 100 {
+            amp.stop()
+        } else {
+            if !amp.isOn { _ = amp.start() }
+            amp.setPercent(percent)
+        }
+    }
+
+    private func position() {
+        guard let p = panel,
+              let screen = NSScreen.main else { return }
+        let f = screen.visibleFrame
+        p.setFrameOrigin(NSPoint(x: f.midX - p.frame.width / 2, y: f.minY + 70))
+    }
+}

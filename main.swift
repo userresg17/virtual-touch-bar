@@ -467,6 +467,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         TurboMode.shared.onAppTerminate()
+        if #available(macOS 14.4, *) { AudioAmplifier.shared.stop() }
         FanControl.shared.releaseOnQuit()
     }
 
@@ -580,6 +581,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             stack.addArrangedSubview(makeButton(symbol: "speaker.wave.3.fill",
                                                 target: self, action: #selector(pressVolume(_:)), tag: 1))
 
+            if #available(macOS 14.4, *) {
+                stack.addArrangedSubview(makeButton(symbol: "waveform.badge.plus",
+                                                    target: self, action: #selector(toggleAmplifier)))
+            }
+
             stack.addArrangedSubview(makeSeparator())
 
             // Captura de tela: tela inteira, janela, seleção e gravação
@@ -659,7 +665,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func toggleAmplifier() {
-        NSSound.beep()   // placeholder: Task 5 abre o HUD aqui
+        if #available(macOS 14.4, *) {
+            AmplifierPanel.shared.toggle()
+        } else {
+            NSSound.beep()   // amplificador exige macOS 14.4+
+        }
     }
 
     @objc private func togglePanel() {
