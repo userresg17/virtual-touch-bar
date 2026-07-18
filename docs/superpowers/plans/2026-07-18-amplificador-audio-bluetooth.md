@@ -306,7 +306,7 @@ git commit -m "feat(amp): gatilho fn+x via CGEventTap sem quebrar o fn"
 
 ---
 
-## Task 3: Motor Core Audio — `AudioAmplifier` (process tap + aggregate + IOProc)
+## Task 3: Motor Core Audio — `AudioAmplifier` (process tap + aggregate + IOProc) ✅ CONCLUÍDA
 
 **Files:**
 - Modify: `amplifier.swift` (adicionar `AudioAmplifier`)

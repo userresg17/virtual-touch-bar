@@ -32,6 +32,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>O amplificador aplica ganho ao áudio do sistema para aumentar o volume na saída Bluetooth.</string>
 </dict>
 </plist>
 PLIST

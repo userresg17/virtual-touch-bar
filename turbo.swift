@@ -53,6 +53,15 @@ func runSelfTestsIfRequested() {
     var c3 = ChordState()
     precondition(c3.onKeyX() == false, "x sem fn = não é chord")
 
+    // --- Amplificador: smoke test do motor Core Audio (cria e destrói) ---
+    if #available(macOS 14.4, *) {
+        precondition(AudioAmplifier.shared.smokeTestCreateDestroy(),
+                     "não criou/destruiu tap+aggregate")
+        print("amp smoke ok")
+    } else {
+        print("amp smoke: macOS < 14.4, pulando")
+    }
+
     print("selftest ok")
     exit(0)
 }

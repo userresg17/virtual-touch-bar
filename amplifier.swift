@@ -147,3 +147,195 @@ final class InputMonitor {
         return Unmanaged.passUnretained(event)
     }
 }
+
+// MARK: - Motor de amplificação (Core Audio process tap, macOS 14.4+)
+
+@available(macOS 14.4, *)
+final class AudioAmplifier {
+    static let shared = AudioAmplifier()
+
+    private(set) var isOn = false
+    private(set) var percent = 100
+
+    private var tapID = AudioObjectID(kAudioObjectUnknown)
+    private var aggregateID = AudioObjectID(kAudioObjectUnknown)
+    private var ioProcID: AudioDeviceIOProcID?
+    private var aggregateUID = ""
+
+    // Estado de DSP (usado dentro do IOProc, na thread de áudio).
+    private var currentGain: Float = 1.0
+    private var targetGain: Float = 1.0
+    private var limiterL = Limiter(threshold: 0.98)
+    private var limiterR = Limiter(threshold: 0.98)
+    private let rampStep: Float = 0.0015   // ~30 ms a 48 kHz por bloco
+
+    private let mainElement = AudioObjectPropertyElement(kAudioObjectPropertyElementMain)
+
+    // MARK: Dispositivo de saída atual
+
+    private func defaultOutputDevice() -> AudioObjectID? {
+        var device = AudioObjectID(0)
+        var size = UInt32(MemoryLayout<AudioObjectID>.size)
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal, mElement: mainElement)
+        let ok = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &device)
+        return ok == noErr ? device : nil
+    }
+
+    private func deviceUID(_ device: AudioObjectID) -> String? {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceUID,
+            mScope: kAudioObjectPropertyScopeGlobal, mElement: mainElement)
+        var uid: CFString = "" as CFString
+        var size = UInt32(MemoryLayout<CFString>.size)
+        let ok = AudioObjectGetPropertyData(device, &addr, 0, nil, &size, &uid)
+        return ok == noErr ? (uid as String) : nil
+    }
+
+    func currentOutputName() -> String {
+        guard let dev = defaultOutputDevice() else { return "saída desconhecida" }
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioObjectPropertyName,
+            mScope: kAudioObjectPropertyScopeGlobal, mElement: mainElement)
+        var name: CFString = "" as CFString
+        var size = UInt32(MemoryLayout<CFString>.size)
+        guard AudioObjectGetPropertyData(dev, &addr, 0, nil, &size, &name) == noErr else {
+            return "saída"
+        }
+        return name as String
+    }
+
+    // MARK: Montagem do tap + aggregate
+
+    /// Cria o tap global mudo e um aggregate privado (dispositivo real + tap).
+    /// Retorna false (e limpa tudo) em qualquer erro.
+    private func buildGraph() -> Bool {
+        guard let outDev = defaultOutputDevice(), let outUID = deviceUID(outDev) else { return false }
+
+        // 1) Tap global (todos os processos), estéreo, mudo no caminho original.
+        let tapDesc = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
+        tapDesc.name = "VirtualTouchBar Amplifier"
+        tapDesc.isPrivate = true
+        tapDesc.muteBehavior = .mutedWhenTapped
+        var newTap = AudioObjectID(kAudioObjectUnknown)
+        guard AudioHardwareCreateProcessTap(tapDesc, &newTap) == noErr,
+              newTap != kAudioObjectUnknown else { return false }
+        tapID = newTap
+        let tapUUID = tapDesc.uuid.uuidString
+
+        // 2) Aggregate privado: sub-device = dispositivo real; tap = nosso tap.
+        aggregateUID = "com.internal.virtualtouchbar.amp"
+        let desc: [String: Any] = [
+            kAudioAggregateDeviceUIDKey as String: aggregateUID,
+            kAudioAggregateDeviceNameKey as String: "Amplificador (VTB)",
+            kAudioAggregateDeviceIsPrivateKey as String: true,
+            kAudioAggregateDeviceIsStackedKey as String: false,
+            kAudioAggregateDeviceMainSubDeviceKey as String: outUID,
+            kAudioAggregateDeviceSubDeviceListKey as String: [
+                [kAudioSubDeviceUIDKey as String: outUID]
+            ],
+            kAudioAggregateDeviceTapListKey as String: [
+                [
+                    kAudioSubTapUIDKey as String: tapUUID,
+                    kAudioSubTapDriftCompensationKey as String: true
+                ]
+            ],
+        ]
+        var newAgg = AudioObjectID(kAudioObjectUnknown)
+        guard AudioHardwareCreateAggregateDevice(desc as CFDictionary, &newAgg) == noErr,
+              newAgg != kAudioObjectUnknown else {
+            AudioHardwareDestroyProcessTap(tapID); tapID = kAudioObjectUnknown
+            return false
+        }
+        aggregateID = newAgg
+        return true
+    }
+
+    private func destroyGraph() {
+        if let proc = ioProcID {
+            AudioDeviceStop(aggregateID, proc)
+            AudioDeviceDestroyIOProcID(aggregateID, proc)
+            ioProcID = nil
+        }
+        if aggregateID != kAudioObjectUnknown {
+            AudioHardwareDestroyAggregateDevice(aggregateID)
+            aggregateID = kAudioObjectUnknown
+        }
+        if tapID != kAudioObjectUnknown {
+            AudioHardwareDestroyProcessTap(tapID)
+            tapID = kAudioObjectUnknown
+        }
+    }
+
+    // MARK: IOProc (thread de áudio) — aplica ganho + limiter
+
+    private func installIOProc() -> Bool {
+        let status = AudioDeviceCreateIOProcIDWithBlock(&ioProcID, aggregateID, nil) {
+            [weak self] _, inInput, _, outOutput, _ in
+            guard let self = self else { return }
+
+            let inList = UnsafeMutableAudioBufferListPointer(
+                UnsafeMutablePointer(mutating: inInput))
+            let outList = UnsafeMutableAudioBufferListPointer(outOutput)
+            let pairs = min(inList.count, outList.count)
+
+            for i in 0..<pairs {
+                let inBuf = inList[i]
+                let outBuf = outList[i]
+                guard let inData = inBuf.mData, let outData = outBuf.mData else { continue }
+                let frames = Int(min(inBuf.mDataByteSize, outBuf.mDataByteSize))
+                    / MemoryLayout<Float>.size
+                let src = inData.assumingMemoryBound(to: Float.self)
+                let dst = outData.assumingMemoryBound(to: Float.self)
+                let channels = Int(inBuf.mNumberChannels)
+
+                var f = 0
+                while f < frames {
+                    self.currentGain = rampedGain(current: self.currentGain,
+                                                  target: self.targetGain, step: self.rampStep)
+                    if channels >= 2 {
+                        dst[f]   = self.limiterL.process(src[f]   * self.currentGain)
+                        dst[f+1] = self.limiterR.process(src[f+1] * self.currentGain)
+                        f += 2
+                    } else {
+                        dst[f] = self.limiterL.process(src[f] * self.currentGain)
+                        f += 1
+                    }
+                }
+            }
+        }
+        guard status == noErr, ioProcID != nil else { return false }
+        return AudioDeviceStart(aggregateID, ioProcID) == noErr
+    }
+
+    // MARK: API pública
+
+    @discardableResult
+    func start() -> Bool {
+        guard !isOn else { return true }
+        guard buildGraph() else { destroyGraph(); return false }
+        guard installIOProc() else { destroyGraph(); return false }
+        isOn = true
+        return true
+    }
+
+    func stop() {
+        guard isOn else { return }
+        destroyGraph()
+        isOn = false
+    }
+
+    func setPercent(_ p: Int) {
+        percent = max(100, min(400, p))
+        targetGain = gainMultiplier(percent: percent)   // lido pela thread de áudio (ramp suaviza)
+    }
+
+    /// Smoke test para o --selftest: prova que o grafo cria e destrói sem crashar.
+    func smokeTestCreateDestroy() -> Bool {
+        let ok = buildGraph()
+        destroyGraph()
+        return ok
+    }
+}
