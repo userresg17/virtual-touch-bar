@@ -13,7 +13,7 @@
 - **Plataforma:** o amplificador exige **macOS 14.4+** (API de process tap). O resto do app é macOS 11+. Proteger o código do motor com `if #available(macOS 14.4, *)`.
 - **Sem dependências novas.** `build.sh` já linka CoreAudio + AudioToolbox.
 - **Padrão do código:** cada recurso é uma `final class` singleton (`.shared`), comentários em português explicando o "porquê", como em `turbo.swift`/`main.swift`.
-- **Testes:** funções puras validadas com `assert(...)` dentro de `runSelfTestsIfRequested()` (em `turbo.swift`), rodadas com `./VirtualTouchBar.app/Contents/MacOS/VirtualTouchBar --selftest`.
+- **Testes:** funções puras validadas com **`precondition(...)`** dentro de `runSelfTestsIfRequested()` (em `turbo.swift`), rodadas com `./VirtualTouchBar.app/Contents/MacOS/VirtualTouchBar --selftest`. ⚠️ **Use `precondition`, NÃO `assert`**: o `build.sh` compila com `swiftc -O`, que descarta `assert()` (vira no-op) — só `precondition` realmente aborta e valida no build de release. (Onde os snippets abaixo mostram `assert`, leia `precondition`.)
 - **Teto de ganho:** +12 dB (linear 4.0x). Limiter sempre ligado. Ramp de ganho ~30 ms.
 - **Falha segura:** qualquer erro de Core Audio → boost desligado + áudio restaurado. Nunca deixar o sistema mudo ou roteado ao sair.
 - **Build/selftest a cada tarefa:** `./build.sh` deve compilar sem erro; onde houver teste, rodar `--selftest` e ver `selftest ok`.
@@ -29,7 +29,7 @@
 
 ---
 
-## Task 1: DSP puro — ganho + limiter
+## Task 1: DSP puro — ganho + limiter ✅ CONCLUÍDA
 
 **Files:**
 - Create: `amplifier.swift`
@@ -45,21 +45,21 @@
 
 ```swift
 // --- Amplificador: DSP puro ---
-assert(gainMultiplier(percent: 100) == 1.0)
-assert(gainMultiplier(percent: 400) == 4.0)
-assert(gainMultiplier(percent: 50) == 1.0, "clamp mínimo")      // clampa pra 100%
-assert(gainMultiplier(percent: 999) == 4.0, "clamp máximo")     // clampa pra 400%
+precondition(gainMultiplier(percent: 100) == 1.0)
+precondition(gainMultiplier(percent: 400) == 4.0)
+precondition(gainMultiplier(percent: 50) == 1.0, "clamp mínimo")      // clampa pra 100%
+precondition(gainMultiplier(percent: 999) == 4.0, "clamp máximo")     // clampa pra 400%
 
 var lim = Limiter(threshold: 0.9)
-assert(lim.process(0.5) == 0.5, "abaixo do teto passa igual")
-let loud = lim.process(3.0)                                      // sinal estourado
-assert(loud <= 0.9 + 1e-6 && loud > 0, "limiter segura no teto: \(loud)")
+precondition(lim.process(0.5) == 0.5, "abaixo do teto passa igual")
+let loud = lim.process(3.0)                                           // sinal estourado
+precondition(loud <= 0.9 + 1e-6 && loud > 0, "limiter segura no teto: \(loud)")
 let neg = lim.process(-3.0)
-assert(neg >= -0.9 - 1e-6 && neg < 0, "limiter segura no teto negativo: \(neg)")
+precondition(neg >= -0.9 - 1e-6 && neg < 0, "limiter segura no teto negativo: \(neg)")
 
-assert(rampedGain(current: 1.0, target: 4.0, step: 0.5) == 1.5, "sobe no máximo step")
-assert(rampedGain(current: 1.0, target: 1.2, step: 0.5) == 1.2, "chega no alvo se perto")
-assert(rampedGain(current: 4.0, target: 1.0, step: 0.5) == 3.5, "desce no máximo step")
+precondition(rampedGain(current: 1.0, target: 4.0, step: 0.5) == 1.5, "sobe no máximo step")
+precondition(rampedGain(current: 1.0, target: 1.2, step: 0.5) == 1.2, "chega no alvo se perto")
+precondition(rampedGain(current: 4.0, target: 1.0, step: 0.5) == 3.5, "desce no máximo step")
 ```
 
 - [ ] **Step 2: Rodar e ver falhar**
@@ -152,15 +152,15 @@ git commit -m "feat(amp): DSP puro de ganho + limiter com testes"
 // --- Amplificador: lógica do chord fn+x ---
 var c1 = ChordState()
 _ = c1.onFnChanged(down: true)
-assert(c1.onFnChanged(down: false) == true, "fn sozinho = alterna a barra")
+precondition(c1.onFnChanged(down: false) == true, "fn sozinho = alterna a barra")
 
 var c2 = ChordState()
 _ = c2.onFnChanged(down: true)
-assert(c2.onKeyX() == true, "fn+x = é chord (engole o x)")
-assert(c2.onFnChanged(down: false) == false, "após chord, soltar fn NÃO alterna a barra")
+precondition(c2.onKeyX() == true, "fn+x = é chord (engole o x)")
+precondition(c2.onFnChanged(down: false) == false, "após chord, soltar fn NÃO alterna a barra")
 
 var c3 = ChordState()
-assert(c3.onKeyX() == false, "x sem fn = não é chord")
+precondition(c3.onKeyX() == false, "x sem fn = não é chord")
 ```
 
 - [ ] **Step 2: Rodar e ver falhar**
@@ -324,8 +324,8 @@ git commit -m "feat(amp): gatilho fn+x via CGEventTap sem quebrar o fn"
 ```swift
 // --- Amplificador: smoke test do motor Core Audio (cria e destrói) ---
 if #available(macOS 14.4, *) {
-    assert(AudioAmplifier.shared.smokeTestCreateDestroy(),
-           "não criou/destruiu tap+aggregate")
+    precondition(AudioAmplifier.shared.smokeTestCreateDestroy(),
+                 "não criou/destruiu tap+aggregate")
     print("amp smoke ok")
 } else {
     print("amp smoke: macOS < 14.4, pulando")

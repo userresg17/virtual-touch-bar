@@ -4,10 +4,10 @@ import Cocoa
 
 func runSelfTestsIfRequested() {
     guard CommandLine.arguments.contains("--selftest") else { return }
-    assert(ramLevel(reclaimableRatio: 0.50, swapUsedBytes: 0) == .ok)
-    assert(ramLevel(reclaimableRatio: 0.20, swapUsedBytes: 0) == .tight)
-    assert(ramLevel(reclaimableRatio: 0.05, swapUsedBytes: 0) == .pressured)
-    assert(ramLevel(reclaimableRatio: 0.50, swapUsedBytes: 2_000_000_000) == .pressured)
+    precondition(ramLevel(reclaimableRatio: 0.50, swapUsedBytes: 0) == .ok)
+    precondition(ramLevel(reclaimableRatio: 0.20, swapUsedBytes: 0) == .tight)
+    precondition(ramLevel(reclaimableRatio: 0.05, swapUsedBytes: 0) == .pressured)
+    precondition(ramLevel(reclaimableRatio: 0.50, swapUsedBytes: 2_000_000_000) == .pressured)
     let s = SystemMetrics.shared.sample()
     print("sample: temp=\(String(describing: s.temp)) watts=\(String(describing: s.watts)) ram=\(s.ram.dot)")
 
@@ -16,12 +16,29 @@ func runSelfTestsIfRequested() {
     if let v0 = SystemVolume.shared.getVolume() {
         SystemVolume.shared.setVolume(0.42)
         let v1 = SystemVolume.shared.getVolume() ?? -1
-        assert(abs(v1 - 0.42) < 0.05, "volume não mudou via CoreAudio: \(v1)")
+        precondition(abs(v1 - 0.42) < 0.05, "volume não mudou via CoreAudio: \(v1)")
         SystemVolume.shared.setVolume(v0) // restaura
         print("volume ok: \(v0) -> \(v1) -> restaurado para \(v0)")
     } else {
         print("volume: dispositivo de saída sem controle ajustável (pulando)")
     }
+
+    // --- Amplificador: DSP puro ---
+    precondition(gainMultiplier(percent: 100) == 1.0)
+    precondition(gainMultiplier(percent: 400) == 4.0)
+    precondition(gainMultiplier(percent: 50) == 1.0, "clamp mínimo")      // clampa pra 100%
+    precondition(gainMultiplier(percent: 999) == 4.0, "clamp máximo")     // clampa pra 400%
+
+    var lim = Limiter(threshold: 0.9)
+    precondition(lim.process(0.5) == 0.5, "abaixo do teto passa igual")
+    let loud = lim.process(3.0)                                      // sinal estourado
+    precondition(loud <= 0.9 + 1e-6 && loud > 0, "limiter segura no teto: \(loud)")
+    let neg = lim.process(-3.0)
+    precondition(neg >= -0.9 - 1e-6 && neg < 0, "limiter segura no teto negativo: \(neg)")
+
+    precondition(rampedGain(current: 1.0, target: 4.0, step: 0.5) == 1.5, "sobe no máximo step")
+    precondition(rampedGain(current: 1.0, target: 1.2, step: 0.5) == 1.2, "chega no alvo se perto")
+    precondition(rampedGain(current: 4.0, target: 1.0, step: 0.5) == 3.5, "desce no máximo step")
 
     print("selftest ok")
     exit(0)
