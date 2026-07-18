@@ -448,6 +448,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var metricsLabel: NSTextField!
     private var metricsTimer: Timer?
     private var turboMenuItem: NSMenuItem?
+    private let inputMonitor = InputMonitor()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         requestAccessibilityIfNeeded()
@@ -647,18 +648,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     // MARK: Monitor da tecla fn
+    // Usa CGEventTap (via InputMonitor) em vez de NSEvent: só o event tap
+    // consegue ENGOLIR o "x" do chord fn+x (o NSEvent global só observa,
+    // deixaria o "x" vazar pro app em foco).
 
     private func installFnMonitors() {
-        let handler: (NSEvent) -> Void = { [weak self] event in
-            // keyCode 63 = tecla fn física; dispara no pressionar (flag .function presente)
-            guard event.keyCode == 63, event.modifierFlags.contains(.function) else { return }
-            self?.togglePanel()
-        }
-        NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged, handler: handler)
-        NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
-            handler(event)
-            return event
-        }
+        inputMonitor.onFnTap = { [weak self] in self?.togglePanel() }
+        inputMonitor.onAmplifierChord = { [weak self] in self?.toggleAmplifier() }
+        inputMonitor.start()
+    }
+
+    @objc private func toggleAmplifier() {
+        NSSound.beep()   // placeholder: Task 5 abre o HUD aqui
     }
 
     @objc private func togglePanel() {

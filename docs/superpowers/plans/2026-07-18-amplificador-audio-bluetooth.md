@@ -129,7 +129,7 @@ git commit -m "feat(amp): DSP puro de ganho + limiter com testes"
 
 ---
 
-## Task 2: Lógica pura do chord `fn+x` + CGEventTap
+## Task 2: Lógica pura do chord `fn+x` + CGEventTap ✅ CONCLUÍDA
 
 **Files:**
 - Modify: `amplifier.swift` (adicionar `ChordState` e `InputMonitor`)

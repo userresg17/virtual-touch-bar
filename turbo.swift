@@ -40,6 +40,19 @@ func runSelfTestsIfRequested() {
     precondition(rampedGain(current: 1.0, target: 1.2, step: 0.5) == 1.2, "chega no alvo se perto")
     precondition(rampedGain(current: 4.0, target: 1.0, step: 0.5) == 3.5, "desce no máximo step")
 
+    // --- Amplificador: lógica do chord fn+x ---
+    var c1 = ChordState()
+    _ = c1.onFnChanged(down: true)
+    precondition(c1.onFnChanged(down: false) == true, "fn sozinho = alterna a barra")
+
+    var c2 = ChordState()
+    _ = c2.onFnChanged(down: true)
+    precondition(c2.onKeyX() == true, "fn+x = é chord (engole o x)")
+    precondition(c2.onFnChanged(down: false) == false, "após chord, soltar fn NÃO alterna a barra")
+
+    var c3 = ChordState()
+    precondition(c3.onKeyX() == false, "x sem fn = não é chord")
+
     print("selftest ok")
     exit(0)
 }
