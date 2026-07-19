@@ -40,10 +40,19 @@ PLIST
 
 swiftc -O -framework Cocoa -framework ServiceManagement -framework IOKit -framework CoreAudio -framework AudioToolbox *.swift -o "$APP/Contents/MacOS/VirtualTouchBar"
 
+# Assinatura com identidade local estável (certificado "VirtualTouchBar Local"
+# no chaveiro). Isso mantém a MESMA identidade de código a cada rebuild, então
+# o macOS não derruba as permissões de Acessibilidade/Monitorização de Entrada.
+# Se o certificado não existir, cai de volta na assinatura ad-hoc (-s -).
+SIGN_ID="VirtualTouchBar Local"
+if ! security find-identity -p codesigning 2>/dev/null | grep -q "$SIGN_ID"; then
+    SIGN_ID="-"
+fi
+
 # Helper das ventoinhas (instalado como setuid root no primeiro uso)
 clang -O2 -framework IOKit smcfan.c -o "$APP/Contents/Resources/smcfan"
-codesign --force -s - "$APP/Contents/Resources/smcfan"
+codesign --force -s "$SIGN_ID" "$APP/Contents/Resources/smcfan"
 
-codesign --force -s - "$APP"
+codesign --force -s "$SIGN_ID" --identifier com.internal.virtualtouchbar "$APP"
 
 echo "Pronto: $(pwd)/$APP"
