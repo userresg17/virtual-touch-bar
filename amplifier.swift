@@ -161,6 +161,7 @@ final class AudioAmplifier {
     private var aggregateID = AudioObjectID(kAudioObjectUnknown)
     private var ioProcID: AudioDeviceIOProcID?
     private var aggregateUID = ""
+    private var previousDefaultDevice: AudioObjectID?  // saída real antes de rotear pro aggregate
 
     // Estado de DSP (usado dentro do IOProc, na thread de áudio).
     private var currentGain: Float = 1.0
@@ -214,6 +215,9 @@ final class AudioAmplifier {
     // A saída mudou (ex.: soundbar BT caiu). Derruba o grafo com segurança e,
     // se o boost estava ligado, remonta no novo dispositivo aplicando a memória.
     private func handleDeviceChange() {
+        // Ignora a troca que NÓS mesmos fazemos pro aggregate ao ligar o boost —
+        // senão o observer derrubaria na hora o grafo que acabou de subir.
+        if isOn, let cur = defaultOutputDevice(), cur == aggregateID { return }
         let wasOn = isOn
         if wasOn { destroyGraph(); isOn = false }
         if let saved = savedPercentForCurrentDevice() { percent = saved; targetGain = gainMultiplier(percent: percent) }
@@ -234,6 +238,18 @@ final class AudioAmplifier {
         let ok = AudioObjectGetPropertyData(
             AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &device)
         return ok == noErr ? device : nil
+    }
+
+    // Troca a saída padrão do sistema (usada pra rotear o áudio pelo aggregate
+    // enquanto o boost está ligado, e pra restaurar a saída real ao desligar).
+    private func setSystemDefaultOutput(_ device: AudioObjectID) {
+        var dev = device
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal, mElement: mainElement)
+        AudioObjectSetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil,
+            UInt32(MemoryLayout<AudioObjectID>.size), &dev)
     }
 
     private func deviceUID(_ device: AudioObjectID) -> String? {
@@ -282,7 +298,8 @@ final class AudioAmplifier {
         let desc: [String: Any] = [
             kAudioAggregateDeviceUIDKey as String: aggregateUID,
             kAudioAggregateDeviceNameKey as String: "Amplificador (VTB)",
-            kAudioAggregateDeviceIsPrivateKey as String: true,
+            // Não-privado: precisa ser "visível" pro sistema pra poder virar a saída padrão.
+            kAudioAggregateDeviceIsPrivateKey as String: false,
             kAudioAggregateDeviceIsStackedKey as String: false,
             kAudioAggregateDeviceMainSubDeviceKey as String: outUID,
             kAudioAggregateDeviceSubDeviceListKey as String: [
@@ -370,12 +387,23 @@ final class AudioAmplifier {
         guard !isOn else { return true }
         guard buildGraph() else { destroyGraph(); return false }
         guard installIOProc() else { destroyGraph(); return false }
+        // Roteia a saída do sistema PRO aggregate. Sem isso o dispositivo real
+        // fica dirigido pelo sistema E pelo aggregate ao mesmo tempo, e o áudio
+        // mutado pelo tap não é substituído pela cópia amplificada -> silêncio.
+        previousDefaultDevice = defaultOutputDevice()
+        setSystemDefaultOutput(aggregateID)
         isOn = true
         return true
     }
 
     func stop() {
         guard isOn else { return }
+        // Restaura a saída real ANTES de destruir o aggregate, pra NUNCA deixar
+        // o sistema apontando pra um dispositivo destruído (= Mac sem som).
+        if let prev = previousDefaultDevice {
+            setSystemDefaultOutput(prev)
+            previousDefaultDevice = nil
+        }
         destroyGraph()
         isOn = false
     }
